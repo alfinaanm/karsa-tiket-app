@@ -23,7 +23,21 @@ const STORAGE_KEYS = {
   TIKET: "karsa_tiket"
 };
 
-// Local storage helper
+// Helper: Normalize Firestore document timestamps to standard ISO string
+function normalizeDoc(d) {
+  const data = d.data();
+  let dibuat = data.dibuat_pada;
+  if (dibuat && typeof dibuat.toDate === "function") {
+    dibuat = dibuat.toDate().toISOString();
+  }
+  return {
+    id: d.id,
+    ...data,
+    dibuat_pada: dibuat
+  };
+}
+
+// Local storage fallback helpers (used only when Firebase is unconfigured)
 function getLocal(key, defaultData) {
   const saved = localStorage.getItem(key);
   if (!saved) {
@@ -41,34 +55,17 @@ function setLocal(key, data) {
   localStorage.setItem(key, JSON.stringify(data));
 }
 
-function normalizeDoc(d) {
-  const data = d.data();
-  let dibuat = data.dibuat_pada;
-  if (dibuat && typeof dibuat.toDate === "function") {
-    dibuat = dibuat.toDate().toISOString();
-  }
-  return {
-    id: d.id,
-    ...data,
-    dibuat_pada: dibuat
-  };
-}
+// =============================================================
+// 1. MODUL EVENT (DATA MASTER)
+// =============================================================
 
-// -------------------------------------------------------------
-// EVENT OPERATIONS
-// -------------------------------------------------------------
 export async function getEvents() {
   if (isFirebaseConfigured && db) {
-    try {
-      const q = query(collection(db, "event"), orderBy("tanggal"), limit(20));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        return snap.docs.map(normalizeDoc);
-      }
-    } catch (err) {
-      console.warn("Firestore getEvents error, falling back to local:", err);
-    }
+    const q = query(collection(db, "event"), orderBy("tanggal"), limit(50));
+    const snap = await getDocs(q);
+    return snap.docs.map(normalizeDoc);
   }
+
   const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
   return [...events].sort((a, b) => (a.tanggal || "").localeCompare(b.tanggal || ""));
 }
@@ -76,7 +73,7 @@ export async function getEvents() {
 export async function addEvent(data) {
   const { nama, tanggal, lokasi, harga_tiket, kuota } = data;
 
-  // Validations per PRD & Schema
+  // Validasi PRD & Skema
   if (!nama || nama.trim().length < 1 || nama.length > 60) {
     throw new Error("Nama acara harus 1 sampai 60 karakter.");
   }
@@ -105,15 +102,11 @@ export async function addEvent(data) {
   };
 
   if (isFirebaseConfigured && db) {
-    try {
-      const docRef = await addDoc(collection(db, "event"), {
-        ...payload,
-        dibuat_pada: serverTimestamp()
-      });
-      return { id: docRef.id, ...payload, dibuat_pada: new Date().toISOString() };
-    } catch (err) {
-      console.warn("Firestore addEvent error, fallback to local:", err);
-    }
+    const docRef = await addDoc(collection(db, "event"), {
+      ...payload,
+      dibuat_pada: serverTimestamp()
+    });
+    return { id: docRef.id, ...payload, dibuat_pada: new Date().toISOString() };
   }
 
   const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
@@ -149,27 +142,24 @@ export async function updateEvent(id, data) {
   }
 
   if (isFirebaseConfigured && db) {
-    try {
-      const docRef = doc(db, "event", id);
-      const currentDoc = await getDoc(docRef);
-      if (currentDoc.exists()) {
-        const currentData = currentDoc.data();
-        if (kuotaNum < (currentData.tiket_terjual || 0)) {
-          throw new Error("Kuota tidak boleh lebih kecil dari tiket yang sudah terjual.");
-        }
-      }
-      await updateDoc(docRef, {
-        nama: nama.trim(),
-        tanggal,
-        lokasi: lokasi.trim(),
-        harga_tiket: hargaNum,
-        kuota: kuotaNum
-      });
-      return { id, nama: nama.trim(), tanggal, lokasi: lokasi.trim(), harga_tiket: hargaNum, kuota: kuotaNum };
-    } catch (err) {
-      if (err.message.includes("Kuota tidak boleh")) throw err;
-      console.warn("Firestore updateEvent error, fallback to local:", err);
+    const docRef = doc(db, "event", id);
+    const currentDoc = await getDoc(docRef);
+    if (!currentDoc.exists()) {
+      throw new Error("Event tidak ditemukan di Firestore.");
     }
+    const currentData = currentDoc.data();
+    if (kuotaNum < (currentData.tiket_terjual || 0)) {
+      throw new Error("Kuota tidak boleh lebih kecil dari tiket yang sudah terjual.");
+    }
+
+    await updateDoc(docRef, {
+      nama: nama.trim(),
+      tanggal,
+      lokasi: lokasi.trim(),
+      harga_tiket: hargaNum,
+      kuota: kuotaNum
+    });
+    return { id, nama: nama.trim(), tanggal, lokasi: lokasi.trim(), harga_tiket: hargaNum, kuota: kuotaNum };
   }
 
   const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
@@ -194,12 +184,8 @@ export async function updateEvent(id, data) {
 
 export async function deleteEvent(id) {
   if (isFirebaseConfigured && db) {
-    try {
-      await deleteDoc(doc(db, "event", id));
-      return true;
-    } catch (err) {
-      console.warn("Firestore deleteEvent error, fallback to local:", err);
-    }
+    await deleteDoc(doc(db, "event", id));
+    return true;
   }
 
   const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
@@ -208,33 +194,29 @@ export async function deleteEvent(id) {
   return true;
 }
 
-// -------------------------------------------------------------
-// PEMBELI OPERATIONS
-// -------------------------------------------------------------
+// =============================================================
+// 2. MODUL PEMBELI (DATA ORANG)
+// =============================================================
+
 export async function getPembeli(searchQuery = "") {
   let list = [];
   if (isFirebaseConfigured && db) {
-    try {
-      const q = query(collection(db, "pembeli"), orderBy("nama"), limit(30));
-      const snap = await getDocs(q);
-      list = snap.docs.map(normalizeDoc);
-    } catch (err) {
-      console.warn("Firestore getPembeli error, fallback to local:", err);
-      list = getLocal(STORAGE_KEYS.PEMBELI, initialPembeli);
-    }
+    const q = query(collection(db, "pembeli"), orderBy("nama"), limit(50));
+    const snap = await getDocs(q);
+    list = snap.docs.map(normalizeDoc);
   } else {
     list = getLocal(STORAGE_KEYS.PEMBELI, initialPembeli);
   }
 
   if (searchQuery.trim()) {
-    const q = searchQuery.toLowerCase().trim();
+    const qStr = searchQuery.toLowerCase().trim();
     list = list.filter(
       p =>
-        (p.nama && p.nama.toLowerCase().includes(q)) ||
-        (p.no_whatsapp && p.no_whatsapp.includes(q))
+        (p.nama && p.nama.toLowerCase().includes(qStr)) ||
+        (p.no_whatsapp && p.no_whatsapp.includes(qStr))
     );
   }
-  return [...list].sort((a, b) => (a.nama || "").localeCompare(b.nama || ""));
+  return list;
 }
 
 export async function addPembeli(data) {
@@ -252,24 +234,19 @@ export async function addPembeli(data) {
   }
 
   if (isFirebaseConfigured && db) {
-    try {
-      const docRef = doc(db, "pembeli", cleanPhone);
-      const existing = await getDoc(docRef);
-      if (existing.exists()) {
-        throw new Error("Nomor WhatsApp sudah terdaftar.");
-      }
-      const payload = {
-        nama: nama.trim(),
-        no_whatsapp: cleanPhone,
-        email: email.trim(),
-        dibuat_pada: serverTimestamp()
-      };
-      await setDoc(docRef, payload);
-      return { id: cleanPhone, ...payload, dibuat_pada: new Date().toISOString() };
-    } catch (err) {
-      if (err.message.includes("sudah terdaftar")) throw err;
-      console.warn("Firestore addPembeli error, fallback to local:", err);
+    const docRef = doc(db, "pembeli", cleanPhone);
+    const existing = await getDoc(docRef);
+    if (existing.exists()) {
+      throw new Error("Nomor WhatsApp sudah terdaftar.");
     }
+    const payload = {
+      nama: nama.trim(),
+      no_whatsapp: cleanPhone,
+      email: email.trim(),
+      dibuat_pada: serverTimestamp()
+    };
+    await setDoc(docRef, payload);
+    return { id: cleanPhone, ...payload, dibuat_pada: new Date().toISOString() };
   }
 
   const buyers = getLocal(STORAGE_KEYS.PEMBELI, initialPembeli);
@@ -299,16 +276,12 @@ export async function updatePembeli(id, data) {
   }
 
   if (isFirebaseConfigured && db) {
-    try {
-      const docRef = doc(db, "pembeli", id);
-      await updateDoc(docRef, {
-        nama: nama.trim(),
-        email: email.trim()
-      });
-      return { id, nama: nama.trim(), email: email.trim() };
-    } catch (err) {
-      console.warn("Firestore updatePembeli error, fallback to local:", err);
-    }
+    const docRef = doc(db, "pembeli", id);
+    await updateDoc(docRef, {
+      nama: nama.trim(),
+      email: email.trim()
+    });
+    return { id, nama: nama.trim(), email: email.trim() };
   }
 
   const buyers = getLocal(STORAGE_KEYS.PEMBELI, initialPembeli);
@@ -326,12 +299,8 @@ export async function updatePembeli(id, data) {
 
 export async function deletePembeli(id) {
   if (isFirebaseConfigured && db) {
-    try {
-      await deleteDoc(doc(db, "pembeli", id));
-      return true;
-    } catch (err) {
-      console.warn("Firestore deletePembeli error, fallback to local:", err);
-    }
+    await deleteDoc(doc(db, "pembeli", id));
+    return true;
   }
 
   const buyers = getLocal(STORAGE_KEYS.PEMBELI, initialPembeli);
@@ -340,24 +309,26 @@ export async function deletePembeli(id) {
   return true;
 }
 
-// -------------------------------------------------------------
-// TIKET (TRANSAKSI) OPERATIONS
-// -------------------------------------------------------------
+// =============================================================
+// 3. MODUL TIKET (DATA TRANSAKSI)
+// =============================================================
+
 export async function getTiket(statusFilter = "Semua") {
   let list = [];
   if (isFirebaseConfigured && db) {
-    try {
-      const q = query(collection(db, "tiket"), orderBy("dibuat_pada", "desc"), limit(30));
-      const snap = await getDocs(q);
-      list = snap.docs.map(normalizeDoc);
-    } catch (err) {
-      console.warn("Firestore getTiket error, fallback to local:", err);
-      list = getLocal(STORAGE_KEYS.TIKET, initialTiket);
+    let q;
+    if (statusFilter && statusFilter !== "Semua") {
+      q = query(collection(db, "tiket"), where("status", "==", statusFilter), limit(50));
+    } else {
+      q = query(collection(db, "tiket"), limit(50));
     }
-  } else {
-    list = getLocal(STORAGE_KEYS.TIKET, initialTiket);
+    const snap = await getDocs(q);
+    list = snap.docs.map(normalizeDoc);
+    // Urutkan tanggal pembuatan terbaru secara in-memory
+    return list.sort((a, b) => new Date(b.dibuat_pada || 0) - new Date(a.dibuat_pada || 0));
   }
 
+  list = getLocal(STORAGE_KEYS.TIKET, initialTiket);
   if (statusFilter && statusFilter !== "Semua") {
     list = list.filter(t => t.status === statusFilter);
   }
@@ -370,36 +341,61 @@ export async function addTiket({ event_id, pembeli_id, jumlah_tiket }) {
     throw new Error("Jumlah tiket harus angka bulat antara 1 sampai 5.");
   }
 
-  // Retrieve event to verify quota and snapshot data
-  let selectedEvent = null;
-  let selectedPembeli = null;
-
   if (isFirebaseConfigured && db) {
-    try {
-      const evDoc = await getDoc(doc(db, "event", event_id));
-      if (!evDoc.exists()) throw new Error("Event tidak ditemukan.");
-      selectedEvent = { id: evDoc.id, ...evDoc.data() };
+    // 1. Ambil dokumen event
+    const evDoc = await getDoc(doc(db, "event", event_id));
+    if (!evDoc.exists()) throw new Error("Event tidak ditemukan di database.");
+    const selectedEvent = { id: evDoc.id, ...evDoc.data() };
 
-      const pbDoc = await getDoc(doc(db, "pembeli", pembeli_id));
-      if (!pbDoc.exists()) throw new Error("Pembeli tidak ditemukan.");
-      selectedPembeli = { id: pbDoc.id, ...pbDoc.data() };
-    } catch (err) {
-      if (err.message.includes("tidak ditemukan")) throw err;
-      console.warn("Firestore fetch error in addTiket:", err);
+    // 2. Ambil dokumen pembeli
+    const pbDoc = await getDoc(doc(db, "pembeli", pembeli_id));
+    if (!pbDoc.exists()) throw new Error("Pembeli tidak ditemukan di database.");
+    const selectedPembeli = { id: pbDoc.id, ...pbDoc.data() };
+
+    // 3. Validasi sisa kuota
+    const sisaKuota = selectedEvent.kuota - (selectedEvent.tiket_terjual || 0);
+    if (qty > sisaKuota) {
+      throw new Error(`Jumlah tiket melebihi sisa kuota yang tersedia (${sisaKuota} kursi).`);
     }
+
+    // 4. HITUNG OTOMATIS: total = harga_tiket * jumlah_tiket
+    const total = selectedEvent.harga_tiket * qty;
+
+    // 5. SALINAN DATA DENORMALISASI (nama event, tanggal, nama pembeli, harga tiket)
+    const payload = {
+      event_id: selectedEvent.id,
+      nama_event: selectedEvent.nama,
+      tanggal_event: selectedEvent.tanggal,
+      pembeli_id: selectedPembeli.no_whatsapp || selectedPembeli.id,
+      nama_pembeli: selectedPembeli.nama,
+      harga_tiket: selectedEvent.harga_tiket,
+      jumlah_tiket: qty,
+      total: total,
+      status: "menunggu_bayar"
+    };
+
+    // 6. Simpan transaksi tiket baru ke Firestore
+    const docRef = await addDoc(collection(db, "tiket"), {
+      ...payload,
+      dibuat_pada: serverTimestamp()
+    });
+
+    // 7. Mutasi otomatis kuota event (tiket_terjual bertambah)
+    await updateDoc(doc(db, "event", selectedEvent.id), {
+      tiket_terjual: increment(qty)
+    });
+
+    return { id: docRef.id, ...payload, dibuat_pada: new Date().toISOString() };
   }
 
-  if (!selectedEvent) {
-    const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
-    selectedEvent = events.find(e => e.id === event_id);
-    if (!selectedEvent) throw new Error("Event tidak ditemukan.");
-  }
+  // Fallback lokal jika Firebase belum diatur
+  const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
+  const selectedEvent = events.find(e => e.id === event_id);
+  if (!selectedEvent) throw new Error("Event tidak ditemukan.");
 
-  if (!selectedPembeli) {
-    const buyers = getLocal(STORAGE_KEYS.PEMBELI, initialPembeli);
-    selectedPembeli = buyers.find(b => b.id === pembeli_id || b.no_whatsapp === pembeli_id);
-    if (!selectedPembeli) throw new Error("Pembeli tidak ditemukan.");
-  }
+  const buyers = getLocal(STORAGE_KEYS.PEMBELI, initialPembeli);
+  const selectedPembeli = buyers.find(b => b.id === pembeli_id || b.no_whatsapp === pembeli_id);
+  if (!selectedPembeli) throw new Error("Pembeli tidak ditemukan.");
 
   const sisaKuota = selectedEvent.kuota - (selectedEvent.tiket_terjual || 0);
   if (qty > sisaKuota) {
@@ -407,8 +403,6 @@ export async function addTiket({ event_id, pembeli_id, jumlah_tiket }) {
   }
 
   const total = selectedEvent.harga_tiket * qty;
-  const initialStatus = "menunggu_bayar";
-
   const payload = {
     event_id: selectedEvent.id,
     nama_event: selectedEvent.nama,
@@ -418,27 +412,9 @@ export async function addTiket({ event_id, pembeli_id, jumlah_tiket }) {
     harga_tiket: selectedEvent.harga_tiket,
     jumlah_tiket: qty,
     total: total,
-    status: initialStatus
+    status: "menunggu_bayar"
   };
 
-  if (isFirebaseConfigured && db) {
-    try {
-      const docRef = await addDoc(collection(db, "tiket"), {
-        ...payload,
-        dibuat_pada: serverTimestamp()
-      });
-      // Atomically increment tiket_terjual on event
-      await updateDoc(doc(db, "event", selectedEvent.id), {
-        tiket_terjual: increment(qty)
-      });
-
-      return { id: docRef.id, ...payload, dibuat_pada: new Date().toISOString() };
-    } catch (err) {
-      console.warn("Firestore addTiket error, fallback to local:", err);
-    }
-  }
-
-  // Local storage transaction
   const tickets = getLocal(STORAGE_KEYS.TIKET, initialTiket);
   const newTicket = {
     id: "Tk" + Math.random().toString(36).substring(2, 7),
@@ -448,8 +424,6 @@ export async function addTiket({ event_id, pembeli_id, jumlah_tiket }) {
   tickets.unshift(newTicket);
   setLocal(STORAGE_KEYS.TIKET, tickets);
 
-  // Update local event tiket_terjual
-  const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
   const evIdx = events.findIndex(e => e.id === selectedEvent.id);
   if (evIdx !== -1) {
     events[evIdx].tiket_terjual = (events[evIdx].tiket_terjual || 0) + qty;
@@ -460,68 +434,66 @@ export async function addTiket({ event_id, pembeli_id, jumlah_tiket }) {
 }
 
 export async function updateTiketStatus(tiketId, newStatus) {
-  // Read current ticket to validate state machine
-  let currentTiket = null;
-  const tickets = getLocal(STORAGE_KEYS.TIKET, initialTiket);
-
   if (isFirebaseConfigured && db) {
-    try {
-      const tSnap = await getDoc(doc(db, "tiket", tiketId));
-      if (tSnap.exists()) {
-        currentTiket = { id: tSnap.id, ...tSnap.data() };
-      }
-    } catch (err) {
-      console.warn("Firestore fetch tiket error:", err);
+    const tSnap = await getDoc(doc(db, "tiket", tiketId));
+    if (!tSnap.exists()) throw new Error("Tiket tidak ditemukan di Firestore.");
+    const currentTiket = { id: tSnap.id, ...tSnap.data() };
+
+    const allowedTransitions = {
+      menunggu_bayar: ["lunas", "dibatalkan"],
+      lunas: ["hadir"],
+      hadir: [],
+      dibatalkan: []
+    };
+
+    const validNext = allowedTransitions[currentTiket.status] || [];
+    if (!validNext.includes(newStatus)) {
+      throw new Error(
+        `Status tidak sah. Status "${currentTiket.status}" hanya boleh diubah ke: ${
+          validNext.length > 0 ? validNext.join(" atau ") : "tidak ada (status akhir)"
+        }.`
+      );
     }
+
+    const isCancelling = newStatus === "dibatalkan" && currentTiket.status !== "dibatalkan";
+
+    // 1. Update status tiket
+    await updateDoc(doc(db, "tiket", tiketId), { status: newStatus });
+
+    // 2. Jika pembatalan, kembalikan kuota acara (tiket_terjual berkurang)
+    if (isCancelling) {
+      await updateDoc(doc(db, "event", currentTiket.event_id), {
+        tiket_terjual: increment(-currentTiket.jumlah_tiket)
+      });
+    }
+
+    return { ...currentTiket, status: newStatus };
   }
 
-  if (!currentTiket) {
-    currentTiket = tickets.find(t => t.id === tiketId);
-  }
+  // Fallback lokal
+  const tickets = getLocal(STORAGE_KEYS.TIKET, initialTiket);
+  const tIdx = tickets.findIndex(t => t.id === tiketId);
+  if (tIdx === -1) throw new Error("Tiket tidak ditemukan.");
 
-  if (!currentTiket) {
-    throw new Error("Tiket tidak ditemukan.");
-  }
-
+  const currentTiket = tickets[tIdx];
   const allowedTransitions = {
     menunggu_bayar: ["lunas", "dibatalkan"],
     lunas: ["hadir"],
     hadir: [],
     dibatalkan: []
   };
-
   const validNext = allowedTransitions[currentTiket.status] || [];
   if (!validNext.includes(newStatus)) {
     throw new Error(
       `Status tidak sah. Status "${currentTiket.status}" hanya boleh diubah ke: ${
-        validNext.length > 0 ? validNext.join(" atau ") : "tidak ada (status akhir)"
+        validNext.length > 0 ? validNext.join(" atau ") : "tidak ada"
       }.`
     );
   }
 
-  // If status is changed to dibatalkan, return quota by decrementing tiket_terjual on event
   const isCancelling = newStatus === "dibatalkan" && currentTiket.status !== "dibatalkan";
-
-  if (isFirebaseConfigured && db) {
-    try {
-      await updateDoc(doc(db, "tiket", tiketId), { status: newStatus });
-      if (isCancelling) {
-        await updateDoc(doc(db, "event", currentTiket.event_id), {
-          tiket_terjual: increment(-currentTiket.jumlah_tiket)
-        });
-      }
-      return { ...currentTiket, status: newStatus };
-    } catch (err) {
-      console.warn("Firestore update status error, fallback to local:", err);
-    }
-  }
-
-  // Local storage update
-  const tIdx = tickets.findIndex(t => t.id === tiketId);
-  if (tIdx !== -1) {
-    tickets[tIdx].status = newStatus;
-    setLocal(STORAGE_KEYS.TIKET, tickets);
-  }
+  tickets[tIdx].status = newStatus;
+  setLocal(STORAGE_KEYS.TIKET, tickets);
 
   if (isCancelling) {
     const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
@@ -537,12 +509,8 @@ export async function updateTiketStatus(tiketId, newStatus) {
 
 export async function deleteTiket(id) {
   if (isFirebaseConfigured && db) {
-    try {
-      await deleteDoc(doc(db, "tiket", id));
-      return true;
-    } catch (err) {
-      console.warn("Firestore deleteTiket error, fallback to local:", err);
-    }
+    await deleteDoc(doc(db, "tiket", id));
+    return true;
   }
 
   const tickets = getLocal(STORAGE_KEYS.TIKET, initialTiket);
@@ -551,50 +519,61 @@ export async function deleteTiket(id) {
   return true;
 }
 
-// -------------------------------------------------------------
-// REKAP OPERATIONS
-// -------------------------------------------------------------
+// =============================================================
+// 4. MODUL REKAPITULASI
+// =============================================================
+
 export async function getRekapData(eventId) {
-  let event = null;
-  let eventTickets = [];
-
   if (isFirebaseConfigured && db) {
-    try {
-      const evSnap = await getDoc(doc(db, "event", eventId));
-      if (evSnap.exists()) {
-        event = { id: evSnap.id, ...evSnap.data() };
-      }
-      const q = query(collection(db, "tiket"), where("event_id", "==", eventId));
-      const tSnap = await getDocs(q);
-      eventTickets = tSnap.docs.map(normalizeDoc);
-    } catch (err) {
-      console.warn("Firestore getRekapData error, fallback to local:", err);
-    }
+    const evSnap = await getDoc(doc(db, "event", eventId));
+    if (!evSnap.exists()) throw new Error("Event tidak ditemukan di database.");
+    const event = { id: evSnap.id, ...evSnap.data() };
+
+    const q = query(collection(db, "tiket"), where("event_id", "==", eventId));
+    const tSnap = await getDocs(q);
+    const eventTickets = tSnap.docs.map(normalizeDoc);
+
+    const kuota = event.kuota || 0;
+    const tiket_terjual = event.tiket_terjual || 0;
+    const sisa_kuota = Math.max(0, kuota - tiket_terjual);
+
+    // Pendapatan dihitung HANYA dari tiket berstatus "lunas" dan "hadir"
+    // Sesuai PRD Bagian 5.4 AC 2
+    const pendapatan = eventTickets
+      .filter(t => t.status === "lunas" || t.status === "hadir")
+      .reduce((sum, t) => sum + (t.total || 0), 0);
+
+    // Jumlah peserta yang hadir (check-in)
+    const jumlah_hadir = eventTickets
+      .filter(t => t.status === "hadir")
+      .reduce((sum, t) => sum + (t.jumlah_tiket || 0), 0);
+
+    return {
+      event,
+      tiketList: eventTickets,
+      kuota,
+      tiket_terjual,
+      sisa_kuota,
+      pendapatan,
+      jumlah_hadir
+    };
   }
 
-  if (!event) {
-    const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
-    event = events.find(e => e.id === eventId);
-  }
-
+  const events = getLocal(STORAGE_KEYS.EVENTS, initialEvents);
+  const event = events.find(e => e.id === eventId);
   if (!event) throw new Error("Event tidak ditemukan.");
 
-  if (eventTickets.length === 0) {
-    const tickets = getLocal(STORAGE_KEYS.TIKET, initialTiket);
-    eventTickets = tickets.filter(t => t.event_id === eventId);
-  }
+  const tickets = getLocal(STORAGE_KEYS.TIKET, initialTiket);
+  const eventTickets = tickets.filter(t => t.event_id === eventId);
 
   const kuota = event.kuota || 0;
   const tiket_terjual = event.tiket_terjual || 0;
   const sisa_kuota = Math.max(0, kuota - tiket_terjual);
 
-  // Pendapatan HANYA dihitung dari tiket status "lunas" dan "hadir"
-  // (menunggu_bayar dan dibatalkan TIDAK dihitung per PRD Bagian 5.4)
   const pendapatan = eventTickets
     .filter(t => t.status === "lunas" || t.status === "hadir")
     .reduce((sum, t) => sum + (t.total || 0), 0);
 
-  // Jumlah hadir: total tiket dari tiket berstatus "hadir"
   const jumlah_hadir = eventTickets
     .filter(t => t.status === "hadir")
     .reduce((sum, t) => sum + (t.jumlah_tiket || 0), 0);
