@@ -18,3 +18,8 @@ firestore-debug.log*
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Dokumen Uji & Working Paper lokal
+Lembar-Uji-Mandiri.md
+*Uji-Mandiri*
+*Working-Paper*
