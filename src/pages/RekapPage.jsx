@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { getEvents, getRekapData } from '../services/dataService';
+import LoadingState from '../components/LoadingState';
+import ErrorState from '../components/ErrorState';
+import EmptyState from '../components/EmptyState';
 import {
   BarChart3,
   Calendar,
@@ -17,41 +20,48 @@ export default function RekapPage({ showToast }) {
   const [rekap, setRekap] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadingRekap, setLoadingRekap] = useState(false);
+  const [error, setError] = useState(null);
+
+  const loadEvents = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const evList = await getEvents();
+      setEvents(evList);
+      if (evList.length > 0) {
+        setSelectedEventId(evList[0].id);
+      }
+    } catch (err) {
+      setError(err.message || 'Gagal memuat daftar event');
+      showToast(err.message || 'Gagal memuat daftar event untuk rekap', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const loadEvents = async () => {
-      try {
-        setLoading(true);
-        const evList = await getEvents();
-        setEvents(evList);
-        if (evList.length > 0) {
-          setSelectedEventId(evList[0].id);
-        }
-      } catch (err) {
-        showToast(err.message || 'Gagal memuat daftar event untuk rekap', 'error');
-      } finally {
-        setLoading(false);
-      }
-    };
     loadEvents();
   }, []);
 
-  useEffect(() => {
+  const loadRekap = async () => {
     if (!selectedEventId) {
       setRekap(null);
       return;
     }
-    const loadRekap = async () => {
-      try {
-        setLoadingRekap(true);
-        const data = await getRekapData(selectedEventId);
-        setRekap(data);
-      } catch (err) {
-        showToast(err.message || 'Gagal memuat rekap data event', 'error');
-      } finally {
-        setLoadingRekap(false);
-      }
-    };
+    try {
+      setLoadingRekap(true);
+      setError(null);
+      const data = await getRekapData(selectedEventId);
+      setRekap(data);
+    } catch (err) {
+      setError(err.message || 'Gagal memuat rekapitulasi data event');
+      showToast(err.message || 'Gagal memuat rekap data event', 'error');
+    } finally {
+      setLoadingRekap(false);
+    }
+  };
+
+  useEffect(() => {
     loadRekap();
   }, [selectedEventId]);
 
@@ -98,23 +108,21 @@ export default function RekapPage({ showToast }) {
       </div>
 
       {loading ? (
-        <div className="empty-state">
-          <p>Memuat rekap data...</p>
-        </div>
+        <LoadingState count={3} />
+      ) : error ? (
+        <ErrorState
+          title="Gagal Memuat Rekapitulasi"
+          message={error}
+          onRetry={loadRekap}
+        />
       ) : events.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-icon">
-            <BarChart3 size={32} />
-          </div>
-          <h2 className="empty-title">Belum ada data event</h2>
-          <p className="empty-desc">
-            Buat event terlebih dahulu di modul Event untuk melihat statistik dan rekapitulasi.
-          </p>
-        </div>
+        <EmptyState
+          icon={BarChart3}
+          title="Belum ada data event"
+          description="Buat event terlebih dahulu di modul Event untuk melihat statistik dan rekapitulasi."
+        />
       ) : loadingRekap || !rekap ? (
-        <div className="empty-state">
-          <p>Mengkalkulasi rekapitulasi event...</p>
-        </div>
+        <LoadingState type="skeleton-rekap" />
       ) : (
         <div>
           {/* Banner Event Information */}
@@ -228,9 +236,12 @@ export default function RekapPage({ showToast }) {
             </h3>
 
             {rekap.tiketList.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-dim)' }}>
-                Belum ada transaksi tiket untuk event ini.
-              </div>
+              <EmptyState
+                icon={Ticket}
+                title="Belum Ada Tiket Terjual"
+                description={`Event "${rekap.event.nama}" belum memiliki transaksi tiket.`}
+                id="empty-state-rekap-tiket"
+              />
             ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>

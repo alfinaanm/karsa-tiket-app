@@ -2,11 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { getEvents, addEvent, updateEvent, deleteEvent } from '../services/dataService';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
+import LoadingState from '../components/LoadingState';
+import ErrorState from '../components/ErrorState';
+import EmptyState from '../components/EmptyState';
 import { Calendar, MapPin, Users, Plus, Edit2, Trash2, Ticket, Tag } from 'lucide-react';
 
 export default function EventsPage({ showToast }) {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -25,9 +29,11 @@ export default function EventsPage({ showToast }) {
   const fetchEvents = async () => {
     try {
       setLoading(true);
+      setError(null);
       const data = await getEvents();
       setEvents(data);
     } catch (err) {
+      setError(err.message || 'Gagal memuat daftar event');
       showToast(err.message || 'Gagal memuat daftar event', 'error');
     } finally {
       setLoading(false);
@@ -157,23 +163,22 @@ export default function EventsPage({ showToast }) {
       </div>
 
       {loading ? (
-        <div className="empty-state">
-          <p>Memuat daftar event...</p>
-        </div>
+        <LoadingState count={3} />
+      ) : error ? (
+        <ErrorState
+          title="Gagal Memuat Daftar Event"
+          message={error}
+          onRetry={fetchEvents}
+        />
       ) : events.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-icon">
-            <Calendar size={32} />
-          </div>
-          <h2 className="empty-title">Belum ada event</h2>
-          <p className="empty-desc">
-            Buat event perdana untuk komunitas Anda dan mulai penjualan tiket workshop atau konser.
-          </p>
-          <button onClick={openAddModal} className="btn btn-primary">
-            <Plus size={16} />
-            <span>Tambah Event Baru</span>
-          </button>
-        </div>
+        <EmptyState
+          icon={Calendar}
+          title="Belum ada event"
+          description="Buat event perdana untuk komunitas Anda dan mulai penjualan tiket workshop atau konser."
+          actionLabel="Tambah Event"
+          onAction={openAddModal}
+          id="empty-state-event"
+        />
       ) : (
         <div className="cards-grid">
           {events.map((ev) => {

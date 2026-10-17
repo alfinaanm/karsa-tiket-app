@@ -9,6 +9,9 @@ import {
 } from '../services/dataService';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
+import LoadingState from '../components/LoadingState';
+import ErrorState from '../components/ErrorState';
+import EmptyState from '../components/EmptyState';
 import {
   Ticket,
   Plus,
@@ -28,6 +31,7 @@ export default function TiketPage({ showToast }) {
   const [pembeliList, setPembeliList] = useState([]);
   const [activeFilter, setActiveFilter] = useState('Semua');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   // Modals & Dialogs
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -54,6 +58,7 @@ export default function TiketPage({ showToast }) {
   const loadData = async () => {
     try {
       setLoading(true);
+      setError(null);
       const [tList, evList, pbList] = await Promise.all([
         getTiket(activeFilter),
         getEvents(),
@@ -63,6 +68,7 @@ export default function TiketPage({ showToast }) {
       setEvents(evList);
       setPembeliList(pbList);
     } catch (err) {
+      setError(err.message || 'Gagal memuat data tiket');
       showToast(err.message || 'Gagal memuat data tiket', 'error');
     } finally {
       setLoading(false);
@@ -240,27 +246,26 @@ export default function TiketPage({ showToast }) {
       </div>
 
       {loading ? (
-        <div className="empty-state">
-          <p>Memuat data tiket...</p>
-        </div>
+        <LoadingState count={3} />
+      ) : error ? (
+        <ErrorState
+          title="Gagal Memuat Transaksi Tiket"
+          message={error}
+          onRetry={loadData}
+        />
       ) : tickets.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-icon">
-            <Ticket size={32} />
-          </div>
-          <h2 className="empty-title">
-            {activeFilter !== 'Semua'
-              ? `Belum ada tiket berstatus "${activeFilter}"`
-              : 'Belum ada transaksi tiket'}
-          </h2>
-          <p className="empty-desc">
-            Pilih event dan pembeli yang sudah terdaftar untuk mencatat pembelian tiket baru.
-          </p>
-          <button onClick={openAddModal} className="btn btn-primary">
-            <Plus size={16} />
-            <span>Buat Tiket Baru</span>
-          </button>
-        </div>
+        <EmptyState
+          icon={Ticket}
+          title={
+            activeFilter !== 'Semua'
+              ? `Belum Ada Tiket Berstatus "${activeFilter}"`
+              : 'Belum Ada Transaksi Tiket'
+          }
+          description="Pilih event dan pembeli yang sudah terdaftar untuk mencatat pembelian tiket baru."
+          actionLabel="Buat Tiket Baru"
+          onAction={openAddModal}
+          id="empty-state-tiket"
+        />
       ) : (
         <div className="cards-grid">
           {tickets.map((t) => (
@@ -535,7 +540,7 @@ export default function TiketPage({ showToast }) {
               disabled={submitting}
               id="btn-submit-tiket"
             >
-              {submitting ? 'Menyimpan...' : 'Simpan Tiket (Menunggu Bayar)'}
+              {submitting ? 'Menyimpan...' : 'Simpan Tiket'}
             </button>
           </div>
         </form>

@@ -2,12 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { getPembeli, addPembeli, updatePembeli, deletePembeli } from '../services/dataService';
 import Modal from '../components/Modal';
 import ConfirmDialog from '../components/ConfirmDialog';
+import LoadingState from '../components/LoadingState';
+import ErrorState from '../components/ErrorState';
+import EmptyState from '../components/EmptyState';
 import { Users, Phone, Mail, Search, Plus, Edit2, Trash2, UserCheck } from 'lucide-react';
 
 export default function PembeliPage({ showToast }) {
   const [pembeliList, setPembeliList] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPembeli, setEditingPembeli] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -24,9 +28,11 @@ export default function PembeliPage({ showToast }) {
   const fetchPembeli = async (query = searchQuery) => {
     try {
       setLoading(true);
+      setError(null);
       const data = await getPembeli(query);
       setPembeliList(data);
     } catch (err) {
+      setError(err.message || 'Gagal memuat data pembeli');
       showToast(err.message || 'Gagal memuat data pembeli', 'error');
     } finally {
       setLoading(false);
@@ -154,29 +160,26 @@ export default function PembeliPage({ showToast }) {
       </div>
 
       {loading ? (
-        <div className="empty-state">
-          <p>Memuat data pembeli...</p>
-        </div>
+        <LoadingState count={3} />
+      ) : error ? (
+        <ErrorState
+          title="Gagal Memuat Data Pembeli"
+          message={error}
+          onRetry={() => fetchPembeli(searchQuery)}
+        />
       ) : pembeliList.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-icon">
-            <Users size={32} />
-          </div>
-          <h2 className="empty-title">
-            {searchQuery ? 'Pembeli tidak ditemukan' : 'Belum ada pembeli terdaftar'}
-          </h2>
-          <p className="empty-desc">
-            {searchQuery
-              ? `Tidak ada pembeli yang cocok dengan kata kunci "${searchQuery}".`
-              : 'Daftarkan pembeli pertama saat mereka menghubungi panitia untuk memesan tiket acara.'}
-          </p>
-          {!searchQuery && (
-            <button onClick={openAddModal} className="btn btn-primary">
-              <Plus size={16} />
-              <span>Tambah Pembeli Baru</span>
-            </button>
-          )}
-        </div>
+        <EmptyState
+          icon={Users}
+          title={searchQuery ? 'Pembeli Tidak Ditemukan' : 'Belum Ada Pembeli Terdaftar'}
+          description={
+            searchQuery
+              ? `Tidak ada data pembeli yang cocok dengan pencarian "${searchQuery}".`
+              : 'Daftarkan pembeli pertama saat mereka memesan tiket acara.'
+          }
+          actionLabel="Tambah Pembeli"
+          onAction={openAddModal}
+          id="empty-state-pembeli"
+        />
       ) : (
         <div className="cards-grid">
           {pembeliList.map((p) => (
