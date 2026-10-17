@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+dist-ssr/
+
+# Environment variables & secrets (jangan di-commit ke GitHub)
+.env
+.env*.local
+
+# Firebase cache
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+
+# Editor & OS files
+.vscode/
+.DS_Store
+Thumbs.db
